@@ -1,0 +1,15 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Hasil Deteksi</title>
+</head>
+<body>
+	<h1>Hasil Deteksi</h1>
+	<img src="{{ image_path }}" alt="Uploaded Image" style="max-width: 300px;">
+	<p>Hasil Prediksi: <strong>{{ predicted_class }}</strong></p>
+	<p>Kepercayaan: <strong>{{ confidence * 100 | round(2) }}%</strong></p>
+	<a href="/">Kembali</a>
+</body>
+</html>
