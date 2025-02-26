@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Deteksi Retinoblastoma</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.4.0/jspdf.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
+    <link rel="stylesheet" href="/newretinodetection/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <!-- Kotak 1: Judul -->
+        <div class="box title">
+            <h1>Yuk !! Cek Mata Anda Sekarang</h1>
+            <p>Apakah ada gejala retinoblastoma atau tidak?</p>
+        </div>
+
+        <!-- Kotak 2: Penjelasan -->
+        <div class="box explanation">
+            <h2>Apa Itu Retinoblastoma?</h2>
+            <p>Retinoblastoma adalah jenis kanker mata yang biasanya terjadi pada anak-anak. Deteksi dini dapat membantu mencegah dampak yang lebih serius.</p>
+        </div>
+
+        <!-- Kotak 3: Penyebab -->
+        <div class="box causes">
+            <h2>Apa Saja Penyebab Retinoblastoma?</h2>
+            <ul>
+                <li>Mutasi genetik pada sel retina</li>
+                <li>Faktor keturunan</li>
+                <li>Paparan zat kimia berbahaya</li>
+            </ul>
+            <button id="checkBtn" style="display:none;">Cek Mata</button>
+            <div id="loading" class="loading">
+                <p>Memuat model...</p>
+            </div>
+        </div>
+
+        <!-- Pop-up -->
+        <div id="popup" class="popup">
+            <div class="popup-content">
+                <h3>Unggah Gambar Mata</h3>
+                <button id="galleryBtn">Dari Galeri</button>
+                <button id="cameraBtn">Foto Langsung</button>
+                <input type="file" id="fileInput" accept="image/*" style="display:none;">
+                <video id="cameraPreview" autoplay playsinline style="display:none; width: 100%;"></video>
+                <canvas id="canvas" style="display:none;"></canvas>
+                <button id="captureBtn" style="display:none;">Ambil Gambar</button>
+                <button id="closePopup">Tutup</button>
+            </div>
+        </div>
+
+        <!-- Hasil -->
+        <div id="result" class="result" style="display:none;">
+            <h3>Hasil Deteksi:</h3>
+            <img id="uploadedImage" src="" alt="Uploaded Image" style="max-width: 100%; border: 2px solid #2c5f2d; border-radius: 10px;">
+            <p id="detectionResult"></p>
+            <button id="downloadPDF">Unduh Hasil PDF</button>
+        </div>
+
+        <script>
+            const checkBtn = document.getElementById('checkBtn');
+            const popup = document.getElementById('popup');
+            const closePopup = document.getElementById('closePopup');
+            const galleryBtn = document.getElementById('galleryBtn');
+            const cameraBtn = document.getElementById('cameraBtn');
+            const fileInput = document.getElementById('fileInput');
+            const cameraPreview = document.getElementById('cameraPreview');
+            const captureBtn = document.getElementById('captureBtn');
+            const canvas = document.getElementById('canvas');
+            const resultDiv = document.getElementById('result');
+            const detectionResult = document.getElementById('detectionResult');
+            const uploadedImage = document.getElementById('uploadedImage');
+            const downloadPDF = document.getElementById('downloadPDF');
+            const loadingDiv = document.getElementById('loading');
+            let stream;
+            let model;
+
+            async function loadModel() {
+                try {
+                    model = await tf.loadLayersModel('/newretinodetection/static/tfjs_model/model.json');
+                    console.log('Model TensorFlow.js berhasil dimuat.');
+                    loadingDiv.style.display = 'none';
+                    checkBtn.style.display = 'block';
+                } catch (err) {
+                    console.error('Gagal memuat model:', err);
+                    loadingDiv.innerHTML = `<p>Gagal memuat model. Error: ${err.message}</p>`;
+                }
+            }
+
+            loadModel();
+
+            checkBtn.addEventListener('click', () => popup.style.display = 'block');
+            closePopup.addEventListener('click', () => closeCamera());
+
+            galleryBtn.addEventListener('click', () => fileInput.click());
+            fileInput.addEventListener('change', () => handleImageUpload(fileInput.files[0]));
+
+            cameraBtn.addEventListener('click', async () => {
+                try {
+                    stream = await navigator.mediaDevices.getUserMedia({ video: true });
+                    cameraPreview.srcObject = stream;
+                    cameraPreview.style.display = 'block';
+                    captureBtn.style.display = 'block';
+                } catch (err) {
+                    alert('Kamera tidak dapat diakses.');
+                }
+            });
+
+            captureBtn.addEventListener('click', () => {
+                const ctx = canvas.getContext('2d');
+                canvas.width = cameraPreview.videoWidth;
+                canvas.height = cameraPreview.videoHeight;
+                ctx.drawImage(cameraPreview, 0, 0);
+                canvas.toBlob(blob => {
+                    handleImageUpload(blob);
+                    closeCamera();
+                }, 'image/jpeg');
+            });
+
+            function closeCamera() {
+                popup.style.display = 'none';
+                if (stream) {
+                    stream.getTracks().forEach(track => track.stop());
+                    stream = null;
+                }
+                cameraPreview.style.display = 'none';
+                captureBtn.style.display = 'none';
+            }
+
+            async function handleImageUpload(file) {
+                if (!model) {
+                    alert('Model belum dimuat. Silakan tunggu sebentar.');
+                    return;
+                }
+
+                const img = new Image();
+                img.src = URL.createObjectURL(file);
+
+                img.onload = async () => {
+                    uploadedImage.src = img.src;
+
+                    const tensor = tf.browser.fromPixels(img)
+                        .resizeNearestNeighbor([224, 224])
+                        .toFloat()
+                        .div(tf.scalar(255))
+                        .expandDims();
+
+                    const predictions = await model.predict(tensor);
+                    const result = predictions.dataSync()[0];
+                    const confidence = Math.abs(result - 0.5) * 2;
+
+                    const status = result > 0.5 ? 'RB' : 'Normal';
+                    detectionResult.innerHTML = `Status: ${status} <br> Kepercayaan: ${(confidence * 100).toFixed(2)}%`;
+                    resultDiv.className = 'result ' + (status === 'RB' ? 'rb' : 'normal');
+                    resultDiv.style.display = 'block';
+
+                    tensor.dispose();
+                };
+            }
+
+            async function generatePDF() {
+                const { jsPDF } = window.jspdf;
+                const pdf = new jsPDF();
+
+                pdf.setFontSize(16);
+                pdf.text("Hasil Deteksi Retinoblastoma", 10, 10);
+                pdf.setFontSize(12);
+                pdf.text(detectionResult.textContent, 10, 30);
+
+                const img = uploadedImage;
+                const imgWidth = 150;
+                const imgHeight = (img.naturalHeight / img.naturalWidth) * imgWidth;
+                pdf.addImage(img.src, "JPEG", 10, 50, imgWidth, imgHeight);
+
+                pdf.save("hasil-deteksi-retinoblastoma.pdf");
+            }
+
+            downloadPDF.addEventListener('click', generatePDF);
+        </script>
+    </div>
+</body>
+</html>
