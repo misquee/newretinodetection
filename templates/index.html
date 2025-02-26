@@ -4,8 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Deteksi Retinoblastoma</title>
-    <link rel="stylesheet" href="/static/style.css">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.4.0/jspdf.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
+    <link rel="stylesheet" href="../static/style.css">
 </head>
 <body>
     <div class="container">
@@ -29,7 +30,10 @@
                 <li>Faktor keturunan</li>
                 <li>Paparan zat kimia berbahaya</li>
             </ul>
-            <button id="checkBtn">Cek Mata</button>
+            <button id="checkBtn" style="display:none;">Cek Mata</button>
+            <div id="loading" class="loading">
+                <p>Memuat model...</p>
+            </div>
         </div>
 
         <!-- Pop-up -->
@@ -68,7 +72,23 @@
             const detectionResult = document.getElementById('detectionResult');
             const uploadedImage = document.getElementById('uploadedImage');
             const downloadPDF = document.getElementById('downloadPDF');
+            const loadingDiv = document.getElementById('loading');
             let stream;
+            let model;
+
+            async function loadModel() {
+                try {
+                    model = await tf.loadLayersModel('http://localhost:8000/static/tfjs_model/model.json');
+                    console.log('Model TensorFlow.js berhasil dimuat.');
+                    loadingDiv.style.display = 'none';
+                    checkBtn.style.display = 'block';
+                } catch (err) {
+                    console.error('Gagal memuat model:', err);
+                    loadingDiv.innerHTML = `<p>Gagal memuat model. Error: ${err.message}</p>`;
+                }
+            }
+
+            loadModel();
 
             checkBtn.addEventListener('click', () => popup.style.display = 'block');
             closePopup.addEventListener('click', () => closeCamera());
@@ -109,46 +129,50 @@
             }
 
             async function handleImageUpload(file) {
-                const formData = new FormData();
-                formData.append('image', file, 'camera_capture.jpg'); // Beri nama file
-
-                try {
-                    // Hapus gambar sebelumnya dari tampilan
-                    uploadedImage.src = "";
-                    detectionResult.innerHTML = "";
-
-                    const response = await fetch('/upload', { method: 'POST', body: formData });
-                    const data = await response.json();
-                    console.log('Response:', data); // Log response
-                    popup.style.display = 'none';
-                    resultDiv.style.display = 'block';
-                    uploadedImage.src = data.image_url + "?t=" + new Date().getTime(); // Tambahkan timestamp untuk menghindari cache
-                    detectionResult.innerHTML = `Status: ${data.result} <br> Kepercayaan: ${(data.confidence * 100).toFixed(2)}%`;
-                    resultDiv.className = 'result ' + (data.result === 'RB' ? 'rb' : 'normal');
-                } catch (err) {
-                    console.error('Error:', err); // Log error
-                    alert('Gagal memproses gambar. Coba lagi.');
+                if (!model) {
+                    alert('Model belum dimuat. Silakan tunggu sebentar.');
+                    return;
                 }
+
+                const img = new Image();
+                img.src = URL.createObjectURL(file);
+
+                img.onload = async () => {
+                    uploadedImage.src = img.src;
+
+                    const tensor = tf.browser.fromPixels(img)
+                    .resizeNearestNeighbor([224, 224])
+                    .toFloat()
+                    .div(tf.scalar(255))
+                    .expandDims();
+
+                    const predictions = await model.predict(tensor);
+                    const result = predictions.dataSync()[0];
+                    const confidence = Math.abs(result - 0.5) * 2;
+
+                    const status = result > 0.5 ? 'RB' : 'Normal';
+                    detectionResult.innerHTML = `Status: ${status} <br> Kepercayaan: ${(confidence * 100).toFixed(2)}%`;
+                    resultDiv.className = 'result ' + (status === 'RB' ? 'rb' : 'normal');
+                    resultDiv.style.display = 'block';
+
+                    tensor.dispose();
+                };
             }
 
-            // Fungsi untuk membuat dan mengunduh PDF
             async function generatePDF() {
                 const { jsPDF } = window.jspdf;
                 const pdf = new jsPDF();
 
-                // Tambahkan teks dan hasil deteksi
                 pdf.setFontSize(16);
                 pdf.text("Hasil Deteksi Retinoblastoma", 10, 10);
                 pdf.setFontSize(12);
                 pdf.text(detectionResult.textContent, 10, 30);
 
-                // Tambahkan gambar yang diunggah
                 const img = uploadedImage;
                 const imgWidth = 150;
                 const imgHeight = (img.naturalHeight / img.naturalWidth) * imgWidth;
                 pdf.addImage(img.src, "JPEG", 10, 50, imgWidth, imgHeight);
 
-                // Unduh PDF
                 pdf.save("hasil-deteksi-retinoblastoma.pdf");
             }
 
